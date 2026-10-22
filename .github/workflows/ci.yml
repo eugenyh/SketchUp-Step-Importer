@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ruby syntax
+        run: |
+          ruby -wc src/eugenyh_step_import.rb
+          ruby -wc src/eugenyh_step_import/main.rb
+          ruby -wc tools/step_bench.rb
+          ruby -wc tools/step_check.rb
+
+      - name: Python syntax
+        run: python -m py_compile src/eugenyh_step_import/step2stl_fc.py build_rbz.py
+
+      - name: Build package
+        run: python build_rbz.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rbz
+          path: dist/*.rbz

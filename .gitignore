@@ -1,0 +1,8 @@
+dist/
+*.rbz
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+*.skp
+*.stl
