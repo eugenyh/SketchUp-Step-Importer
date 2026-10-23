@@ -22,7 +22,10 @@ DIST = os.path.join(ROOT, 'dist')
 LOADER = 'eugenyh_step_import.rb'
 REQUIRED = [LOADER,
             'eugenyh_step_import/main.rb',
-            'eugenyh_step_import/step2stl_fc.py']
+            'eugenyh_step_import/i18n.rb',
+            'eugenyh_step_import/settings.rb',
+            'eugenyh_step_import/step2stl_fc.py',
+            'eugenyh_step_import/locales/en.json']
 
 
 def read_version():

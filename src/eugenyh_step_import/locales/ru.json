@@ -1,0 +1,80 @@
+{
+  "_language_name": "Русский",
+
+  "menu.title": "STEP Import (FreeCAD)",
+  "menu.import": "Импортировать сборку STEP…",
+  "menu.settings": "Настройки…",
+
+  "freecad.locate_title": "Укажите FreeCADCmd.exe",
+  "freecad.not_found": "FreeCADCmd.exe не найден.\n\nУкажите путь к нему в Extensions → STEP Import (FreeCAD) → Настройки.",
+
+  "dlg.title": "Импорт STEP",
+  "dlg.cancel": "Отмена",
+
+  "stage.preparing": "Подготовка…",
+  "stage.reading_step": "Чтение STEP",
+  "stage.analyzing": "Анализ структуры сборки",
+  "stage.tessellating": "Триангуляция деталей",
+  "stage.tessellating_big": "Триангуляция (крупный узел)",
+  "stage.writing": "Запись результата",
+  "stage.fc_finished": "FreeCAD завершил работу",
+  "stage.building": "Построение модели",
+  "stage.building_part": "Построение: %{name}",
+  "stage.saving": "Сохранение .skp",
+  "stage.finished": "Импорт завершён",
+
+  "detail.copying": "Копирование файлов",
+  "detail.reading_step": "FreeCAD загружает файл (для больших сборок это может занять минуту)",
+  "detail.part": "%{name}",
+  "detail.merging": "%{name}: склейка %{count} деталей в один меш",
+  "detail.written": "%{defs} форм, %{insts} вхождений",
+  "detail.heavy": "≈%{tris} треугольников, около %{secs} с (окно на это время может не обновляться)",
+  "detail.progress": "%{done} из %{total}: %{name}",
+  "detail.saved": "Сохранено: %{path}",
+  "detail.counts": "Вхождений: %{insts}, уникальных форм: %{defs}",
+
+  "log.fc_started": "FreeCAD запущен",
+  "log.fc_visible_fallback": "Скрытый запуск недоступен, обычный запуск",
+  "log.building": "Построение модели в SketchUp",
+  "log.heavy": "%{name} (~%{secs} с)",
+  "log.done": "Готово за %{sec} с",
+
+  "status.cancelled": "Импорт STEP отменён",
+  "status.fc_working": "STEP: работает FreeCAD, %{sec} c...",
+  "status.summary": "STEP: вхождений %{insts}, уникальных форм %{defs}",
+  "status.saved": "Сохранено: %{path}",
+
+  "err.start": "Не удалось запустить импорт: %{msg}",
+  "err.generic": "Ошибка: %{cls}: %{msg}",
+  "err.freecad_reported": "FreeCAD сообщил об ошибке:\n%{text}",
+  "err.freecad_no_result": "FreeCAD завершился без результата.\n%{text}",
+  "err.freecad_timeout": "FreeCAD работает дольше %{minutes} минут, остановлен.",
+  "err.no_parts": "В STEP не найдено деталей",
+  "err.model_changed": "Активная модель была изменена во время импорта",
+  "err.log_hint": "%{msg}\n\nЖурнал: %{log}",
+  "err.save_failed": "Не удалось сохранить .skp: %{msg}",
+
+  "big.prompt": "Крупные меши:\n%{list}\n\nИмпорт может занять несколько минут. Продолжить?",
+  "big.item": "%{name}: ~%{tris} треугольников",
+
+  "run.already": "Импорт STEP уже выполняется",
+  "run.script_missing": "Не найден %{path}",
+  "run.open_title": "Выберите STEP",
+
+  "save.exists": "Файл %{name} уже существует. Перезаписать?",
+
+  "settings.title": "STEP Import — Настройки",
+  "settings.language": "Язык",
+  "settings.freecad": "Путь к FreeCADCmd.exe",
+  "settings.placeholder": "Не задан — будет найден автоматически",
+  "settings.hint_path": "Оставьте поле пустым, чтобы при следующем импорте путь к FreeCAD искался автоматически.",
+  "settings.config_file": "Файл настроек: %{path}",
+  "settings.browse": "Обзор…",
+  "settings.detect": "Найти автоматически",
+  "settings.save": "Сохранить",
+  "settings.detect_failed": "FreeCADCmd.exe не найден в обычных местах. Укажите его кнопкой «Обзор…».",
+  "settings.path_missing": "Файл не найден:\n%{path}",
+  "settings.path_name_warn": "Выбранный файл называется не FreeCADCmd.exe. Использовать его всё равно?",
+  "settings.save_failed": "Не удалось записать файл настроек:\n%{path}",
+  "settings.lang_changed": "Язык изменён. Названия пунктов меню обновятся после перезапуска SketchUp."
+}

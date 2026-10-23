@@ -1,0 +1,80 @@
+{
+  "_language_name": "English",
+
+  "menu.title": "STEP Import (FreeCAD)",
+  "menu.import": "Import STEP assembly…",
+  "menu.settings": "Settings…",
+
+  "freecad.locate_title": "Locate FreeCADCmd.exe",
+  "freecad.not_found": "FreeCADCmd.exe was not found.\n\nSet its path in Extensions → STEP Import (FreeCAD) → Settings.",
+
+  "dlg.title": "STEP Import",
+  "dlg.cancel": "Cancel",
+
+  "stage.preparing": "Preparing…",
+  "stage.reading_step": "Reading STEP",
+  "stage.analyzing": "Analyzing assembly structure",
+  "stage.tessellating": "Tessellating parts",
+  "stage.tessellating_big": "Tessellating (large sub-assembly)",
+  "stage.writing": "Writing results",
+  "stage.fc_finished": "FreeCAD finished",
+  "stage.building": "Building the model",
+  "stage.building_part": "Building: %{name}",
+  "stage.saving": "Saving .skp",
+  "stage.finished": "Import finished",
+
+  "detail.copying": "Copying files",
+  "detail.reading_step": "FreeCAD is loading the file (large assemblies can take a minute)",
+  "detail.part": "%{name}",
+  "detail.merging": "%{name}: merging %{count} parts into one mesh",
+  "detail.written": "%{defs} shapes, %{insts} instances",
+  "detail.heavy": "≈%{tris} triangles, about %{secs} s (the window may not update meanwhile)",
+  "detail.progress": "%{done} of %{total}: %{name}",
+  "detail.saved": "Saved: %{path}",
+  "detail.counts": "Instances: %{insts}, unique shapes: %{defs}",
+
+  "log.fc_started": "FreeCAD started",
+  "log.fc_visible_fallback": "Hidden launch unavailable, using a normal launch",
+  "log.building": "Building the model in SketchUp",
+  "log.heavy": "%{name} (~%{secs} s)",
+  "log.done": "Done in %{sec} s",
+
+  "status.cancelled": "STEP import cancelled",
+  "status.fc_working": "STEP: FreeCAD is working, %{sec} s...",
+  "status.summary": "STEP: %{insts} instances, %{defs} unique shapes",
+  "status.saved": "Saved: %{path}",
+
+  "err.start": "Could not start the import: %{msg}",
+  "err.generic": "Error: %{cls}: %{msg}",
+  "err.freecad_reported": "FreeCAD reported an error:\n%{text}",
+  "err.freecad_no_result": "FreeCAD exited without a result.\n%{text}",
+  "err.freecad_timeout": "FreeCAD has been running for more than %{minutes} minutes and was stopped.",
+  "err.no_parts": "No parts were found in the STEP file",
+  "err.model_changed": "The active model was changed during the import",
+  "err.log_hint": "%{msg}\n\nLog: %{log}",
+  "err.save_failed": "Could not save the .skp: %{msg}",
+
+  "big.prompt": "Large meshes:\n%{list}\n\nThe import may take several minutes. Continue?",
+  "big.item": "%{name}: ~%{tris} triangles",
+
+  "run.already": "A STEP import is already running",
+  "run.script_missing": "Not found: %{path}",
+  "run.open_title": "Select a STEP file",
+
+  "save.exists": "File %{name} already exists. Overwrite?",
+
+  "settings.title": "STEP Import — Settings",
+  "settings.language": "Language",
+  "settings.freecad": "FreeCADCmd.exe path",
+  "settings.placeholder": "Not set — will be detected automatically",
+  "settings.hint_path": "Leave the field empty to auto-detect FreeCAD on the next import.",
+  "settings.config_file": "Settings file: %{path}",
+  "settings.browse": "Browse…",
+  "settings.detect": "Auto-detect",
+  "settings.save": "Save",
+  "settings.detect_failed": "FreeCADCmd.exe was not found in the usual locations. Use Browse… to select it.",
+  "settings.path_missing": "File not found:\n%{path}",
+  "settings.path_name_warn": "The selected file is not named FreeCADCmd.exe. Use it anyway?",
+  "settings.save_failed": "Could not write the settings file:\n%{path}",
+  "settings.lang_changed": "Language changed. Menu item names will update after SketchUp is restarted."
+}

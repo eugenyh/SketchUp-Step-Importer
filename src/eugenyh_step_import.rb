@@ -13,7 +13,7 @@ module EugenyH
         UI.messagebox('STEP Import (FreeCAD) requires SketchUp 2021 or newer.')
       else
         ex = SketchupExtension.new('STEP Import (FreeCAD)', 'eugenyh_step_import/main')
-        ex.version     = '1.0.1'
+        ex.version     = '1.1.0'
         ex.creator     = 'EugenyH'
         ex.copyright   = '2026 EugenyH'
         ex.description = 'Imports STEP assemblies via FreeCAD: parts become groups, ' \

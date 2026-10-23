@@ -5,48 +5,81 @@
 # STEP -> (FreeCADCmd + step2stl_fc.py) -> def_XXXX.stl + manifest.json -> groups/components -> .skp
 #
 # step2stl_fc.py must sit next to this file.
-# Progress is logged to %TEMP%\step_import.log (and to the Ruby Console).
-# Импорт сборки STEP через FreeCAD; журнал работы: %TEMP%\step_import.log
+# User-facing text lives in locales/<code>.json (see i18n.rb); the language and the
+# FreeCADCmd path are chosen in Extensions -> STEP Import (FreeCAD) -> Settings.
+# The work log is always written in English to %TEMP%\step_import.log (and to the Ruby Console).
 
 require 'sketchup.rb'
 require 'tmpdir'
 require 'fileutils'
 require 'json'
+require 'cgi'
+require_relative 'i18n'
+require_relative 'settings'
 
 module EugenyH
   module StepImport
-    PREF   = 'EugenyH_StepImport'
     SCRIPT = File.join(__dir__, 'step2stl_fc.py')
 
-    # Файл настроек: %APPDATA%\EugenyH\StepImport\config.json
-    # Лежит вне папки расширения, поэтому переживает обновление и переустановку.
-    CONFIG_DIR  = File.join(ENV['APPDATA'] || Dir.home, 'EugenyH', 'StepImport')
-    CONFIG_FILE = File.join(CONFIG_DIR, 'config.json')
+    # Legacy registry location of the FreeCADCmd path (read once to migrate to settings.json)
+    LEGACY_PREF = 'EugenyH_StepImport'
 
-    # Параметры конвертации (мм)
-    TOL        = '0.1'   # допуск триангуляции обычных деталей
-    TOL_MERGED = '0.5'   # допуск для склеенных контейнеров (плата)
-    MERGE_MIN  = '50'    # контейнер с таким числом деталей и больше склеивается в один STL
+    # Conversion parameters (mm)
+    TOL        = '0.1'   # tessellation tolerance for regular parts
+    TOL_MERGED = '0.5'   # tolerance for merged containers (e.g. a PCB)
+    MERGE_MIN  = '50'    # a container with this many parts or more is merged into one STL
 
-    SAVE_SKP   = true    # сохранять итоговую модель в .skp рядом с исходным STEP
+    SAVE_SKP   = true    # save the resulting model as .skp next to the source STEP
 
-    BIG_TRIS   = 300_000 # больше этого числа треугольников в одном STL - предупреждаем
-    SOFTEN_MAX = 20_000  # сглаживание рёбер только для мешей не больше этого размера
-    SOFTEN_ANGLE = 10    # рёбра между гранями с углом меньше этого (градусы) скрываются и сглаживаются
-    CHUNK      = 20_000  # треугольников за один разбор бинарного STL
+    BIG_TRIS   = 300_000 # warn when a single STL has more triangles than this
+    SOFTEN_MAX = 20_000  # soften edges only for meshes up to this size
+    SOFTEN_ANGLE = 10    # edges between faces closer than this angle (degrees) are hidden and smoothed
+    CHUNK      = 20_000  # triangles per read of a binary STL
 
-    FREECAD_TIMEOUT = 900 # секунд; после этого FreeCAD принудительно завершается
-    HIDE_FREECAD    = true # скрывать окно FreeCADCmd (если wscript недоступен - обычный запуск)
+    FREECAD_TIMEOUT = 900  # seconds; FreeCAD is killed after this
+    HIDE_FREECAD    = true # hide the FreeCADCmd console window (falls back to a normal launch without wscript)
 
-    HEAVY_TRIS     = 40_000 # меши крупнее строятся с предварительным сообщением в окне
-    TRIS_PER_SEC   = 5_000  # грубая оценка скорости чтения STL, для подсказки времени
-    FC_SHARE       = 0.80   # доля общей полосы, отведённая работе FreeCAD
-    BUILD_FROM     = 80.0   # проценты общей полосы: построение модели
+    HEAVY_TRIS     = 40_000 # bigger meshes are announced in the dialog before building
+    TRIS_PER_SEC   = 5_000  # rough STL build speed, used only for the time hint
+    FC_SHARE       = 0.80   # share of the total progress bar given to FreeCAD
+    BUILD_FROM     = 80.0   # percent of the total bar: model building
     BUILD_TO       = 97.0
-    LOG_FILE   = File.join(Dir.tmpdir, 'step_import.log')  # журнал, можно открывать во время работы
+    LOG_FILE   = File.join(Dir.tmpdir, 'step_import.log')  # can be opened while the import runs
 
-    # Пишет в файл (сразу, с закрытием) и в Ruby Console.
-    # Консоль SketchUp не обновляется, пока главный поток занят, а файл можно читать снаружи.
+    # Shared look of the HtmlDialogs (light/dark)
+    BASE_CSS = <<~'CSS'
+      :root{--bg:#f3f3f3;--fg:#202020;--muted:#6b6b6b;--track:#d9d9d9;--accent:#1a73e8;--ok:#1e9e55;--card:#fff;--border:#d0d0d0}
+      @media (prefers-color-scheme: dark){:root{--bg:#2b2b2b;--fg:#ececec;--muted:#a8a8a8;--track:#454545;--card:#333;--border:#555;--accent:#5b9dff}}
+      html,body{height:100%}
+      body{margin:0;background:var(--bg);color:var(--fg);font:13px 'Segoe UI',Arial,sans-serif;user-select:none;cursor:default}
+      button{font:13px 'Segoe UI',Arial,sans-serif;padding:5px 22px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--fg);cursor:pointer}
+      button:hover{border-color:var(--accent)}
+    CSS
+
+    # Translation shortcut: StepImport.t(key, name: value) fills %{name} placeholders
+    def self.t(key, vars = nil)
+      Lang.t(key, vars)
+    end
+
+    module Translate
+      private
+
+      def t(key, vars = nil)
+        StepImport.t(key, vars)
+      end
+    end
+
+    # Replaces %%KEY%% placeholders in an HTML template (values must already be escaped).
+    def self.fill_template(tpl, map)
+      tpl.gsub(/%%(\w+)%%/) { map.fetch(Regexp.last_match(1), '').to_s }
+    end
+
+    def self.esc(text)
+      CGI.escapeHTML(text.to_s)
+    end
+
+    # Writes to the file (opened and closed each time) and to the Ruby Console.
+    # The console does not repaint while the main thread is busy; the file can be read from outside.
     def self.log(msg)
       line = "[STEP #{Time.now.strftime('%H:%M:%S')}] #{msg}"
       File.open(LOG_FILE, 'a:UTF-8') { |f| f.puts(line) }
@@ -55,92 +88,56 @@ module EugenyH
       nil
     end
 
-    # ---------- Настройки (config.json) ----------
-
-    def self.load_config
-      data = JSON.parse(File.read(CONFIG_FILE, encoding: 'UTF-8'))
-      data.is_a?(Hash) ? data : {}
-    rescue StandardError
-      {}
-    end
-
-    # Возвращает true, если файл записан.
-    def self.save_config(cfg)
-      FileUtils.mkdir_p(CONFIG_DIR)
-      File.write(CONFIG_FILE, JSON.pretty_generate(cfg), encoding: 'UTF-8')
-      true
-    rescue StandardError => e
-      log "Не удалось записать #{CONFIG_FILE}: #{e.class}: #{e.message}"
-      false
-    end
-
     # ---------- FreeCAD ----------
 
-    # Сохранённый путь: сначала config.json, затем реестр (настройки версии 1.0.0).
-    # Возвращает путь, только если файл по нему существует.
-    def self.saved_freecad_path
-      cfg = load_config
-      reg = Sketchup.read_default(PREF, 'freecadcmd')
-      [cfg['freecadcmd'], reg].each do |p|
-        next if p.nil? || p.to_s.empty?
-        p = p.to_s.dup.force_encoding('UTF-8').tr('\\', '/')
-        if File.exist?(p)
-          # Путь нашёлся только в реестре - переносим в config.json
-          store_freecad_path(p) if cfg['freecadcmd'].to_s.empty?
-          return p
-        end
-        log "Сохранённый путь к FreeCADCmd недоступен: #{p}"
-      end
-      nil
+    # Path saved in settings (migrates the old registry value on first use)
+    def self.saved_freecad
+      path = Settings.get('freecadcmd')
+      return path if path
+
+      legacy = Sketchup.read_default(LEGACY_PREF, 'freecadcmd').to_s
+      return nil if legacy.empty?
+      Settings.update('freecadcmd' => legacy)
+      legacy
     end
 
-    def self.store_freecad_path(path)
-      cfg = load_config
-      cfg['freecadcmd'] = path
-      ok = save_config(cfg)
-      Sketchup.write_default(PREF, 'freecadcmd', path)   # запасной вариант
-      log "Путь к FreeCADCmd сохранён (#{ok ? CONFIG_FILE : 'только реестр'}): #{path}"
+    # Looks for FreeCADCmd.exe in the usual install locations (Program Files on any drive, per-user installs)
+    def self.detect_freecad
+      roots = [ENV['ProgramFiles'], ENV['ProgramW6432']]
+      roots << File.join(ENV['LOCALAPPDATA'], 'Programs') if ENV['LOCALAPPDATA']
+      ('C'..'Z').each { |d| roots << "#{d}:/Program Files" }
+      roots = roots.compact.map { |r| r.tr('\\', '/') }.uniq
+      roots.flat_map { |r| Dir.glob(File.join(r, 'FreeCAD*', 'bin', 'FreeCADCmd.exe')) }.max
     end
 
-    # force = true: не использовать сохранённый путь и автопоиск, всегда спросить.
-    def self.freecad_exe(force = false)
-      unless force
-        saved = saved_freecad_path
-        return saved if saved
-        found = Dir.glob('C:/Program Files/FreeCAD*/bin/FreeCADCmd.exe').max
-      end
+    # File dialog for FreeCADCmd.exe; returns the path or nil
+    def self.pick_freecad(current = nil)
+      dir = current.to_s.empty? ? nil : File.dirname(current.to_s)
+      dir = 'C:/Program Files' unless dir && File.directory?(dir)
+      UI.openpanel(t('freecad.locate_title'), dir, 'FreeCADCmd.exe|FreeCADCmd.exe||')
+    end
 
-      unless found
-        start = File.dirname(saved_freecad_path || 'C:/Program Files/x')
-        start = 'C:/Program Files' unless File.directory?(start)
-        found = UI.openpanel('Укажите FreeCADCmd.exe', start,
-                             'FreeCADCmd.exe|FreeCADCmd.exe||')
-      end
+    # Saved path if it still exists, otherwise auto-detection, otherwise ask the user
+    def self.freecad_exe
+      saved = saved_freecad
+      return saved if saved && File.exist?(saved)
 
-      if found
-        found = found.to_s.tr('\\', '/')
-        store_freecad_path(found)
-      end
+      log "Saved FreeCADCmd path is missing: #{saved}" if saved
+      found = detect_freecad || pick_freecad
+      Settings.update('freecadcmd' => found) if found
       found
     end
 
-    # Пункт меню: сменить путь к FreeCADCmd вручную.
-    def self.choose_freecad
-      exe = freecad_exe(true)
-      UI.messagebox("Путь к FreeCADCmd сохранён:\n#{exe}") if exe
-    end
-
-    # ---------- Окно прогресса ----------
+    # ---------- Progress window ----------
 
     class ProgressDialog
+      include Translate
+
       HTML = <<~'HTML'
         <!DOCTYPE html>
-        <html lang="ru"><head><meta charset="utf-8">
+        <html lang="%%LANG%%"><head><meta charset="utf-8">
         <style>
-          :root{--bg:#f3f3f3;--fg:#202020;--muted:#6b6b6b;--track:#d9d9d9;--accent:#1a73e8;--ok:#1e9e55;--card:#fff;--border:#d0d0d0}
-          @media (prefers-color-scheme: dark){:root{--bg:#2b2b2b;--fg:#ececec;--muted:#a8a8a8;--track:#454545;--card:#333;--border:#555;--accent:#5b9dff}}
-          html,body{height:100%}
-          body{margin:0;background:var(--bg);color:var(--fg);font:13px 'Segoe UI',Arial,sans-serif;user-select:none;cursor:default}
+          %%CSS%%
           .wrap{padding:16px 18px;display:flex;flex-direction:column;height:100%;box-sizing:border-box}
           .file{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
           .stage{font-size:16px;font-weight:600;margin:6px 0 10px}
@@ -155,17 +152,15 @@ module EugenyH
           .log li{padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
           .log li:last-child{color:var(--fg)}
           .buttons{text-align:right;min-height:30px}
-          button{font:13px 'Segoe UI',Arial,sans-serif;padding:5px 22px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--fg);cursor:pointer}
-          button:hover{border-color:var(--accent)}
         </style></head>
         <body><div class="wrap">
           <div class="file" id="file"></div>
-          <div class="stage" id="stage">Подготовка…</div>
+          <div class="stage" id="stage">%%PREPARING%%</div>
           <div class="bar ind" id="bar"><div class="fill" id="fill"></div></div>
           <div class="row"><span id="pct"></span><span id="elapsed">0:00</span></div>
           <div class="detail" id="detail"></div>
           <ul class="log" id="log"></ul>
-          <div class="buttons"><button id="cancel" onclick="sketchup.cancel()">Отмена</button></div>
+          <div class="buttons"><button id="cancel" onclick="sketchup.cancel()">%%CANCEL%%</button></div>
         </div>
         <script>
           var t0 = null, timer = null;
@@ -188,15 +183,20 @@ module EugenyH
         </script></body></html>
       HTML
 
-      def initialize(title, file, &on_cancel)
+      def initialize(file, &on_cancel)
         @on_cancel = on_cancel
         @ready   = false
         @closing = false
-        @state = { 'pct' => -1, 'stage' => 'Подготовка', 'detail' => '',
+        @state = { 'pct' => -1, 'stage' => t('stage.preparing'), 'detail' => '',
                    'file' => file, 'logs' => [], 'mode' => 'run' }
-        @dlg = UI::HtmlDialog.new(dialog_title: title, scrollable: false, resizable: false,
+        html = StepImport.fill_template(HTML,
+                                        'CSS'       => BASE_CSS,
+                                        'LANG'      => StepImport.esc(Lang.current),
+                                        'CANCEL'    => StepImport.esc(t('dlg.cancel')),
+                                        'PREPARING' => StepImport.esc(t('stage.preparing')))
+        @dlg = UI::HtmlDialog.new(dialog_title: t('dlg.title'), scrollable: false, resizable: false,
                                   width: 480, height: 400, style: UI::HtmlDialog::STYLE_DIALOG)
-        @dlg.set_html(HTML)
+        @dlg.set_html(html)
         @dlg.add_action_callback('ready')  { |_c| @ready = true; push }
         @dlg.add_action_callback('cancel') { |_c| @on_cancel.call }
         @dlg.set_on_closed { @on_cancel.call unless @closing }
@@ -204,7 +204,7 @@ module EugenyH
         @dlg.center if @dlg.respond_to?(:center)
       end
 
-      # pct < 0 - неопределённый прогресс (бегущая полоса)
+      # pct < 0 - indeterminate progress (running bar)
       def update(pct, stage, detail = '')
         @state['pct']    = pct
         @state['stage']  = stage
@@ -241,9 +241,174 @@ module EugenyH
       end
     end
 
-    # ---------- Задание импорта ----------
+    # ---------- Settings window ----------
+
+    class SettingsDialog
+      include Translate
+
+      HTML = <<~'HTML'
+        <!DOCTYPE html>
+        <html lang="%%LANG%%"><head><meta charset="utf-8">
+        <style>
+          %%CSS%%
+          .wrap{padding:6px 20px 16px;display:flex;flex-direction:column;height:100%;box-sizing:border-box}
+          label{display:block;font-weight:600;margin:16px 0 6px}
+          select,input[type=text]{font:13px 'Segoe UI',Arial,sans-serif;padding:5px 7px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--fg);box-sizing:border-box;user-select:text}
+          select{min-width:200px}
+          .path{display:flex;gap:6px}
+          .path input{flex:1;min-width:0}
+          .path button{padding:5px 12px;white-space:nowrap}
+          .hint{color:var(--muted);font-size:12px;margin-top:6px;word-break:break-all}
+          .buttons{margin-top:auto;text-align:right}
+          .buttons button{margin-left:6px}
+          button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+        </style></head>
+        <body><div class="wrap">
+          <label for="lang">%%LANGUAGE%%</label>
+          <select id="lang"></select>
+
+          <label for="path">%%FREECAD%%</label>
+          <div class="path">
+            <input type="text" id="path" placeholder="%%PLACEHOLDER%%" spellcheck="false">
+            <button id="browse">%%BROWSE%%</button>
+            <button id="detect">%%DETECT%%</button>
+          </div>
+          <div class="hint">%%HINT%%</div>
+          <div class="hint">%%CONFIG%%</div>
+
+          <div class="buttons">
+            <button class="primary" id="save">%%SAVE%%</button><button id="cancel">%%CANCEL%%</button>
+          </div>
+        </div>
+        <script>
+          function $(id){ return document.getElementById(id); }
+          function init(s){
+            var sel = $('lang'); sel.innerHTML = '';
+            s.languages.forEach(function(l){
+              var o = document.createElement('option');
+              o.value = l[0]; o.textContent = l[1];
+              if (l[0] === s.lang) o.selected = true;
+              sel.appendChild(o);
+            });
+            $('path').value = s.path || '';
+          }
+          function setPath(p){ $('path').value = p; }
+          $('browse').onclick = function(){ sketchup.browse($('path').value); };
+          $('detect').onclick = function(){ sketchup.detect(); };
+          $('save').onclick   = function(){ sketchup.save(JSON.stringify({lang: $('lang').value, path: $('path').value})); };
+          $('cancel').onclick = function(){ sketchup.cancel(); };
+          window.onload = function(){ sketchup.ready(); };
+        </script></body></html>
+      HTML
+
+      # Opens the dialog, or brings the already open one to the front
+      def self.show_or_focus
+        if @instance && @instance.alive?
+          @instance.focus
+        else
+          @instance = new
+        end
+      end
+
+      def initialize
+        @closed = false
+        html = StepImport.fill_template(HTML,
+                                        'CSS'         => BASE_CSS,
+                                        'LANG'        => StepImport.esc(Lang.current),
+                                        'LANGUAGE'    => StepImport.esc(t('settings.language')),
+                                        'FREECAD'     => StepImport.esc(t('settings.freecad')),
+                                        'PLACEHOLDER' => StepImport.esc(t('settings.placeholder')),
+                                        'HINT'        => StepImport.esc(t('settings.hint_path')),
+                                        'CONFIG'      => StepImport.esc(t('settings.config_file', path: Settings.path)),
+                                        'BROWSE'      => StepImport.esc(t('settings.browse')),
+                                        'DETECT'      => StepImport.esc(t('settings.detect')),
+                                        'SAVE'        => StepImport.esc(t('settings.save')),
+                                        'CANCEL'      => StepImport.esc(t('dlg.cancel')))
+        @dlg = UI::HtmlDialog.new(dialog_title: t('settings.title'), scrollable: false, resizable: false,
+                                  width: 540, height: 330, style: UI::HtmlDialog::STYLE_DIALOG)
+        @dlg.set_html(html)
+        @dlg.add_action_callback('ready')  { |_c| guarded { push_state } }
+        @dlg.add_action_callback('browse') { |_c, current| guarded { browse(current) } }
+        @dlg.add_action_callback('detect') { |_c| guarded { detect } }
+        @dlg.add_action_callback('save')   { |_c, json| guarded { save(json) } }
+        @dlg.add_action_callback('cancel') { |_c| @dlg.close }
+        @dlg.set_on_closed { @closed = true }
+        @dlg.show
+        @dlg.center if @dlg.respond_to?(:center)
+      end
+
+      def alive?
+        !@closed
+      end
+
+      def focus
+        @dlg.bring_to_front
+      end
+
+      private
+
+      def guarded
+        yield
+      rescue StandardError => e
+        StepImport.log "Settings dialog error: #{e.class}: #{e.message}"
+      end
+
+      def push_state
+        state = { 'languages' => Lang.available.to_a,
+                  'lang'      => Lang.current,
+                  'path'      => StepImport.saved_freecad.to_s }
+        @dlg.execute_script("init(#{JSON.generate(state)})")
+      end
+
+      def set_path(path)
+        @dlg.execute_script("setPath(#{path.to_s.to_json})")
+      end
+
+      def browse(current)
+        path = StepImport.pick_freecad(current)
+        set_path(path) if path
+      end
+
+      def detect
+        found = StepImport.detect_freecad
+        if found
+          set_path(found)
+        else
+          UI.messagebox(t('settings.detect_failed'))
+        end
+      end
+
+      def save(json)
+        data = JSON.parse(json)
+        path = data['path'].to_s.strip.delete('"').tr('\\', '/')
+        lang = data['lang'].to_s
+        lang = Lang.current unless Lang.available.key?(lang)
+
+        unless path.empty?
+          return UI.messagebox(t('settings.path_missing', path: path)) unless File.file?(path)
+          unless File.basename(path).downcase.start_with?('freecadcmd')
+            return unless UI.messagebox(t('settings.path_name_warn'), MB_YESNO) == IDYES
+          end
+        end
+
+        changed = lang != Lang.current
+        ok = Settings.update('language' => lang, 'freecadcmd' => (path.empty? ? nil : path))
+        return UI.messagebox(t('settings.save_failed', path: Settings.path)) unless ok
+
+        # An emptied field means "auto-detect": also clear the legacy registry value so it is not migrated back
+        Sketchup.write_default(LEGACY_PREF, 'freecadcmd', '') if path.empty?
+        Lang.current = lang
+        StepImport.log "Settings saved: language=#{lang}, freecadcmd=#{path.empty? ? '(auto)' : path}"
+        @dlg.close
+        UI.messagebox(t('settings.lang_changed')) if changed
+      end
+    end
+
+    # ---------- Import job ----------
 
     class Job
+      include Translate
+
       def initialize(exe, step)
         @exe      = exe
         @step     = step
@@ -253,7 +418,7 @@ module EugenyH
         @op_open  = false
         @keep_tmp = false
         @fc_pid   = nil
-        @mode     = nil      # :hidden (через wscript) или :direct
+        @mode     = nil      # :hidden (via wscript) or :direct
         @timer    = nil
         @tick     = nil
       end
@@ -264,36 +429,36 @@ module EugenyH
 
       def start
         File.write(LOG_FILE, '')
-        @tmp = Dir.mktmpdir('step2stl')               # ASCII-путь, без кириллицы
-        StepImport.log "Старт: #{@step}"
+        @tmp = Dir.mktmpdir('step2stl')               # ASCII-only path
+        StepImport.log "Start: #{@step}"
         StepImport.log "FreeCADCmd: #{@exe}"
-        StepImport.log "Временная папка: #{@tmp}"
+        StepImport.log "Temp folder: #{@tmp}"
 
-        @dlg = ProgressDialog.new('Импорт STEP', @name) { cancel }
-        @dlg.update(-1, 'Подготовка', 'Копирование файлов')
+        @dlg = ProgressDialog.new(@name) { cancel }
+        @dlg.update(-1, t('stage.preparing'), t('detail.copying'))
         FileUtils.cp(@step, File.join(@tmp, 'in.step'))
         FileUtils.cp(SCRIPT, File.join(@tmp, 'conv.py'))
 
         launch_freecad
         @t_fc = Time.now
-        @dlg.add_log('FreeCAD запущен')
-        @dlg.update(-1, 'Чтение STEP', 'FreeCAD загружает файл (для больших сборок это может занять минуту)')
+        @dlg.add_log(t('log.fc_started'))
+        @dlg.update(-1, t('stage.reading_step'), t('detail.reading_step'))
         @timer = UI.start_timer(0.3, true) { guarded { poll_freecad } }
       rescue => e
-        fail!("Не удалось запустить импорт: #{e.message}", e)
+        fail!(t('err.start', msg: e.message), e)
       end
 
-      # Отмена (кнопка или закрытие окна)
+      # Cancel (button or closing the window)
       def cancel
         return unless @active
         @active = false
-        StepImport.log 'Отменено пользователем'
+        StepImport.log 'Cancelled by the user'
         stop_timers
         kill_freecad
         abort_op
         @dlg.close if @dlg
         cleanup_tmp
-        Sketchup.status_text = 'Импорт STEP отменён'
+        Sketchup.status_text = t('status.cancelled')
       end
 
       private
@@ -301,7 +466,7 @@ module EugenyH
       def guarded
         yield
       rescue => e
-        fail!("Ошибка: #{e.class}: #{e.message}", e)
+        fail!(t('err.generic', cls: e.class, msg: e.message), e)
       end
 
       # ----- FreeCAD -----
@@ -316,7 +481,7 @@ module EugenyH
 
         wscript = File.join(ENV['SystemRoot'] || 'C:/Windows', 'System32', 'wscript.exe')
         if HIDE_FREECAD && File.exist?(wscript)
-          # Окно консоли FreeCADCmd создаётся скрытым: WScript.Shell.Run со стилем 0.
+          # The FreeCADCmd console is created hidden: WScript.Shell.Run with window style 0.
           cmd  = %("#{@exe.tr('/', '\\')}" "#{@py.tr('/', '\\')}")
           body = %(CreateObject("WScript.Shell").Run "#{cmd.gsub('"', '""')}", 0, False\r\n)
           vbs  = File.join(@tmp, 'run.vbs')
@@ -324,7 +489,7 @@ module EugenyH
           pid = Process.spawn(@env, wscript, '//B', '//Nologo', vbs.tr('/', '\\'))
           Process.detach(pid)
           @mode = :hidden
-          StepImport.log 'FreeCAD запущен скрыто (wscript)'
+          StepImport.log 'FreeCAD started hidden (wscript)'
         else
           launch_direct
         end
@@ -335,7 +500,7 @@ module EugenyH
                                 [:out, :err] => File.join(@tmp, 'freecad_console.log'),
                                 :in => File::NULL)
         @mode = :direct
-        StepImport.log "FreeCAD запущен обычным способом, pid #{@fc_pid}"
+        StepImport.log "FreeCAD started normally, pid #{@fc_pid}"
       end
 
       def read_pid
@@ -358,7 +523,7 @@ module EugenyH
       rescue Errno::ECHILD, Errno::ESRCH
         false
       rescue StandardError
-        true                       # не уверены - считаем живым, спасёт таймаут
+        true                       # not sure - assume alive, the timeout will catch it
       end
 
       def kill_freecad
@@ -366,9 +531,9 @@ module EugenyH
         return unless pid
         return unless fc_alive?
         Process.kill('KILL', pid)
-        StepImport.log "Процесс FreeCAD #{pid} завершён принудительно"
+        StepImport.log "FreeCAD process #{pid} killed"
       rescue StandardError => e
-        StepImport.log "Не удалось завершить FreeCAD #{pid}: #{e.class}"
+        StepImport.log "Could not kill FreeCAD #{pid}: #{e.class}"
       end
 
       def read_json(name)
@@ -383,6 +548,14 @@ module EugenyH
         ''
       end
 
+      # step2stl_fc.py reports progress as translation keys (+ optional arguments)
+      def fc_text(key, args = nil)
+        return '' if key.to_s.empty?
+        vars = nil
+        vars = args.each_with_object({}) { |(k, v), h| h[k.to_sym] = v } if args.is_a?(Hash)
+        t(key.to_s, vars)
+      end
+
       def poll_freecad
         return unless @active
         elapsed = Time.now - @t_fc
@@ -390,14 +563,14 @@ module EugenyH
 
         if File.exist?(File.join(@tmp, 'error.txt'))
           txt = read_text('error.txt')
-          return fail!("FreeCAD сообщил об ошибке:\n#{txt[-900..] || txt}")
+          return fail!(t('err.freecad_reported', text: txt[-900..] || txt))
         end
 
         if (prog = read_json('progress.json'))
           f = prog['fraction']
           pct = f.nil? ? -1 : (f.to_f * FC_SHARE * 100).round(1)
-          stage = prog['stage'].to_s
-          @dlg.update(pct, stage, prog['detail'].to_s)
+          stage = fc_text(prog['stage'])
+          @dlg.update(pct, stage, fc_text(prog['detail'], prog['args']))
           if stage != @last_stage
             @last_stage = stage
             @dlg.add_log(stage)
@@ -406,50 +579,50 @@ module EugenyH
 
         if File.exist?(File.join(@tmp, 'done.flag'))
           stop_timers
-          StepImport.log format('FreeCAD готов за %.1f c', elapsed)
-          kill_freecad                       # на случай, если процесс не вышел сам
+          StepImport.log format('FreeCAD finished in %.1f s', elapsed)
+          kill_freecad                       # in case the process did not exit by itself
           return begin_build
         end
 
         if @mode == :hidden && @fc_pid.nil? && elapsed > 20
-          StepImport.log 'Скрытый запуск не сработал, запускаю обычным способом'
-          @dlg.add_log('Скрытый запуск недоступен, обычный запуск')
+          StepImport.log 'Hidden launch did not work, starting FreeCAD normally'
+          @dlg.add_log(t('log.fc_visible_fallback'))
           launch_direct
           @t_fc = Time.now
           return
         end
 
         if @fc_pid && !fc_alive?
-          return if File.exist?(File.join(@tmp, 'done.flag'))   # успел дописать - обработаем на следующем тике
-          return fail!("FreeCAD завершился без результата.\n#{read_text('freecad.log')[-600..]}")
+          return if File.exist?(File.join(@tmp, 'done.flag'))   # finished just now - handled on the next tick
+          return fail!(t('err.freecad_no_result', text: read_text('freecad.log')[-600..]))
         end
 
         if elapsed > FREECAD_TIMEOUT
-          fail!("FreeCAD работает дольше #{FREECAD_TIMEOUT / 60} минут, остановлен.")
+          fail!(t('err.freecad_timeout', minutes: FREECAD_TIMEOUT / 60))
         else
-          Sketchup.status_text = format('STEP: работает FreeCAD, %d c...', elapsed)
+          Sketchup.status_text = t('status.fc_working', sec: elapsed.to_i)
         end
       end
 
-      # ----- Построение модели (шагами, по таймеру) -----
+      # ----- Model building (in steps, driven by a timer) -----
 
       def begin_build
         data = JSON.parse(File.read(File.join(@tmp, 'manifest.json'), encoding: 'UTF-8'))
         @defs  = data['definitions']
         @insts = data['instances']
-        StepImport.log "Манифест: определений #{@defs.size}, вхождений #{@insts.size}"
-        return fail!('В STEP не найдено деталей') if @insts.empty?
+        StepImport.log "Manifest: #{@defs.size} definitions, #{@insts.size} instances"
+        return fail!(t('err.no_parts')) if @insts.empty?
 
         big = []
         @defs.each do |d|
           size = File.size(File.join(@tmp, d['file']))
           d['tris_est'] = [(size - 84) / 50, 0].max
-          StepImport.log format('%s  %s: %.1f МБ, ~%d треугольников', d['file'], d['name'], size / 1048576.0, d['tris_est'])
+          StepImport.log format('%s  %s: %.1f MB, ~%d triangles', d['file'], d['name'], size / 1048576.0, d['tris_est'])
           big << d if d['tris_est'] > BIG_TRIS
         end
         unless big.empty?
-          txt = big.map { |d| "#{d['name']}: ~#{d['tris_est']} треугольников" }.join("\n")
-          answer = UI.messagebox("Крупные меши:\n#{txt}\n\nИмпорт может занять несколько минут. Продолжить?", MB_YESNO)
+          list = big.map { |d| t('big.item', name: d['name'], tris: d['tris_est']) }.join("\n")
+          answer = UI.messagebox(t('big.prompt', list: list), MB_YESNO)
           return cancel unless answer == IDYES
         end
 
@@ -459,12 +632,12 @@ module EugenyH
         @op_open = true
         @root = @model.active_entities.add_group
         @root.name = @name
-        @cache = {}          # путь контейнеров -> группа
-        @comps = {}          # индекс определения -> ComponentDefinition
+        @cache = {}          # container path -> group
+        @comps = {}          # definition index -> ComponentDefinition
         @idx = 0
         @announced = {}
         @t_build = Time.now
-        @dlg.add_log('Построение модели в SketchUp')
+        @dlg.add_log(t('log.building'))
         schedule(0.05)
       end
 
@@ -474,7 +647,7 @@ module EugenyH
 
       def build_tick
         return unless @active
-        return fail!('Активная модель была изменена во время импорта') unless Sketchup.active_model.guid == @guid
+        return fail!(t('err.model_changed')) unless Sketchup.active_model.guid == @guid
 
         budget = Time.now + 0.15
         while @idx < @insts.size
@@ -482,19 +655,20 @@ module EugenyH
           d = @defs[i['def']]
           needs_build = d['count'] > 1 ? !@comps.key?(i['def']) : true
 
-          # Тяжёлая деталь: сначала показываем сообщение, даём окну перерисоваться, потом строим.
+          # Heavy part: announce it first and let the window repaint, then build.
           if needs_build && d['tris_est'] > HEAVY_TRIS && !@announced[@idx]
             @announced[@idx] = true
             secs = [(d['tris_est'] / TRIS_PER_SEC.to_f).round, 1].max
-            @dlg.update(build_pct, "Построение: #{i['name']}",
-                        "≈#{d['tris_est']} треугольников, около #{secs} с (окно на это время может не обновляться)")
-            @dlg.add_log("#{i['name']} (~#{secs} с)")
+            @dlg.update(build_pct, t('stage.building_part', name: i['name']),
+                        t('detail.heavy', tris: d['tris_est'], secs: secs))
+            @dlg.add_log(t('log.heavy', name: i['name'], secs: secs))
             return schedule(0.15)
           end
 
           place_instance(i, d)
           @idx += 1
-          @dlg.update(build_pct, 'Построение модели', "#{@idx} из #{@insts.size}: #{i['name']}")
+          @dlg.update(build_pct, t('stage.building'),
+                      t('detail.progress', done: @idx, total: @insts.size, name: i['name']))
           break if Time.now > budget
         end
 
@@ -507,19 +681,19 @@ module EugenyH
 
       def place_instance(i, d)
         parent = StepImport.ensure_path(@root, @cache, i['path'])
-        t = StepImport.to_transformation(i['matrix'])
+        tr = StepImport.to_transformation(i['matrix'])
 
         if d['count'] > 1
           cd = (@comps[i['def']] ||= StepImport.make_definition(@tmp, d))
           return unless cd
-          obj = parent.entities.add_instance(cd, t)
+          obj = parent.entities.add_instance(cd, tr)
         else
           obj = parent.entities.add_group
           unless StepImport.fill_entities(obj.entities, @tmp, d)
             obj.erase!
             return
           end
-          obj.transformation = t
+          obj.transformation = tr
         end
         obj.name = i['name']
       end
@@ -527,26 +701,26 @@ module EugenyH
       def finish_build
         @model.commit_operation
         @op_open = false
-        StepImport.log format('Построение модели: %.1f c', Time.now - @t_build)
-        Sketchup.status_text = "STEP: вхождений #{@insts.size}, уникальных форм #{@defs.size}"
+        StepImport.log format('Model built in %.1f s', Time.now - @t_build)
+        Sketchup.status_text = t('status.summary', insts: @insts.size, defs: @defs.size)
 
         skp = nil
         if SAVE_SKP
-          @dlg.update(BUILD_TO, 'Сохранение .skp', "#{@name}.skp")
+          @dlg.update(BUILD_TO, t('stage.saving'), "#{@name}.skp")
           skp = StepImport.save_skp(@step)
         end
 
         total = Time.now - @t0
-        StepImport.log format('Готово, всего %.1f c', total)
-        @dlg.add_log(format('Готово за %.0f с', total))
-        @dlg.finish('Импорт завершён',
-                    skp ? "Сохранено: #{skp}" : "Вхождений: #{@insts.size}, уникальных форм: #{@defs.size}")
+        StepImport.log format('Done, %.1f s in total', total)
+        @dlg.add_log(t('log.done', sec: total.round))
+        @dlg.finish(t('stage.finished'),
+                    skp ? t('detail.saved', path: skp) : t('detail.counts', insts: @insts.size, defs: @defs.size))
         @active = false
         cleanup_tmp
         UI.start_timer(2.5, false) { @dlg.close }
       end
 
-      # ----- Завершение -----
+      # ----- Finishing -----
 
       def abort_op
         return unless @op_open
@@ -574,38 +748,42 @@ module EugenyH
         stop_timers
         kill_freecad
         abort_op
-        StepImport.log "ОШИБКА: #{msg}"
+        StepImport.log "ERROR: #{msg}"
         StepImport.log err.backtrace.first(8).join("\n") if err
-        StepImport.log "Папка сохранена для разбора: #{@tmp}"
+        StepImport.log "Temp folder kept for diagnosis: #{@tmp}"
         @keep_tmp = true
         @dlg.close if @dlg
-        UI.messagebox("#{msg}\n\nЖурнал: #{LOG_FILE}")
+        UI.messagebox(t('err.log_hint', msg: msg, log: LOG_FILE))
       end
     end
 
-    # ---------- Запуск ----------
+    # ---------- Entry points ----------
 
     def self.run
       if @job && @job.active?
-        return UI.messagebox('Импорт STEP уже выполняется')
+        return UI.messagebox(t('run.already'))
       end
 
       exe = freecad_exe
-      return UI.messagebox('FreeCADCmd.exe не найден') unless exe
-      return UI.messagebox("Не найден #{SCRIPT}") unless File.exist?(SCRIPT)
+      return UI.messagebox(t('freecad.not_found')) unless exe
+      return UI.messagebox(t('run.script_missing', path: SCRIPT)) unless File.exist?(SCRIPT)
 
-      step = UI.openpanel('Выберите STEP', '', 'STEP|*.step;*.stp||')
+      step = UI.openpanel(t('run.open_title'), '', 'STEP|*.step;*.stp||')
       return unless step
 
       @job = Job.new(exe, step)
       @job.start
     end
 
-    # ---------- Построение геометрии ----------
+    def self.open_settings
+      SettingsDialog.show_or_focus
+    end
 
-    # Читает STL и строит грани в entities (передавать ПУСТУЮ коллекцию). Возвращает false, если мешей нет.
-    # fill_from_mesh на порядки быстрее add_faces_from_mesh на больших мешах
-    # (замер на плате: 35 тыс. треугольников - 0.27 c против 29 c).
+    # ---------- Geometry building ----------
+
+    # Reads an STL and builds faces in entities (pass an EMPTY collection). Returns false if there are no meshes.
+    # fill_from_mesh is orders of magnitude faster than add_faces_from_mesh on big meshes
+    # (measured on a PCB: 35k triangles - 0.27 s vs 29 s).
     def self.fill_entities(entities, dir, d)
       t0 = Time.now
       t_fill = 0.0
@@ -618,19 +796,19 @@ module EugenyH
       end
       return false if total.zero?
 
-      log format('  %s: %d треугольников, чтение %.1f c, грани %.1f c',
+      log format('  %s: %d triangles, reading %.1f s, faces %.1f s',
                  d['file'], total, (Time.now - t0) - t_fill, t_fill)
 
       if total <= SOFTEN_MAX
         soften(entities)
       else
-        log "  сглаживание пропущено (треугольников больше #{SOFTEN_MAX})"
+        log "  edge softening skipped (more than #{SOFTEN_MAX} triangles)"
       end
       true
     end
 
-    # Цепочка вложенных групп по пути контейнеров (все с единичной матрицей).
-    # Матрицы деталей глобальные, поэтому контейнеры трансформаций не несут.
+    # Chain of nested groups following the container path (all with identity transformations).
+    # Part matrices are global, so containers carry no transformation.
     def self.ensure_path(root, cache, path)
       parent = root
       key = []
@@ -655,8 +833,8 @@ module EugenyH
       cd
     end
 
-    # FreeCAD: 16 чисел построчно, перенос в r[3], r[7], r[11] (мм)
-    # SketchUp: 16 чисел по столбцам, перенос в дюймах
+    # FreeCAD: 16 numbers row by row, translation in r[3], r[7], r[11] (mm)
+    # SketchUp: 16 numbers column by column, translation in inches
     def self.to_transformation(r)
       Geom::Transformation.new([
         r[0], r[4], r[8],  r[12],
@@ -666,50 +844,50 @@ module EugenyH
       ])
     end
 
-    # ---------- Сохранение .skp ----------
+    # ---------- Saving .skp ----------
 
     def self.save_skp(step_path)
       skp = File.join(File.dirname(step_path), "#{File.basename(step_path, '.*')}.skp")
       if File.exist?(skp)
-        answer = UI.messagebox("Файл #{File.basename(skp)} уже существует. Перезаписать?", MB_YESNO)
+        answer = UI.messagebox(t('save.exists', name: File.basename(skp)), MB_YESNO)
         return unless answer == IDYES
       end
       model = Sketchup.active_model
       if model.path.to_s.empty?
-        # Новая (ещё не сохранённая) модель: save_copy для неё недоступен,
-        # поэтому сохраняем саму модель под этим именем.
+        # New (unsaved) model: save_copy is not available for it,
+        # so the model itself is saved under this name.
         model.save(skp)
       else
-        # Модель уже открыта из файла: пишем копию, текущий документ не трогаем.
+        # Model opened from a file: write a copy, leave the current document alone.
         model.save_copy(skp)
       end
-      Sketchup.status_text = "Сохранено: #{skp}"
-      log "Сохранено: #{skp}"
+      Sketchup.status_text = t('status.saved', path: skp)
+      log "Saved: #{skp}"
       skp
     rescue => e
-      UI.messagebox("Не удалось сохранить .skp: #{e.message}")
+      UI.messagebox(t('err.save_failed', msg: e.message))
       nil
     end
 
     # ---------- STL ----------
 
-    # Отдаёт блоку [PolygonMesh, число_треугольников]. Весь STL идёт ОДНИМ мешем:
-    # fill_from_mesh работает только с пустой коллекцией, повторные вызовы в ту же
-    # группу ничего не добавляют (проверено на плате: из 6 порций построилась только первая).
+    # Yields [PolygonMesh, triangle_count] to the block. The whole STL goes in ONE mesh:
+    # fill_from_mesh only works on an empty collection; repeated calls into the same
+    # group add nothing (verified on the PCB: of 6 chunks only the first was built).
     def self.each_stl_mesh(path)
       size = File.size(path)
 
       File.open(path, 'rb') do |f|
         count = f.read(84)[80, 4].unpack1('V')
 
-        if size == 84 + 50 * count    # бинарный STL
+        if size == 84 + 50 * count    # binary STL
           fmt_full = 'x12e9x2' * CHUNK
-          limit = count        # ВАЖНО: один STL = один PolygonMesh (см. комментарий выше)
+          limit = count        # IMPORTANT: one STL = one PolygonMesh (see the comment above)
           left = count
           while left > 0
             n    = left < limit ? left : limit
             mesh = Geom::PolygonMesh.new
-            pts  = {}                 # (x, y, z) STL -> индекс точки в mesh
+            pts  = {}                 # (x, y, z) in STL -> point index in the mesh
             tris = 0
             todo = n
             while todo > 0
@@ -722,7 +900,7 @@ module EugenyH
             left -= n
             yield mesh, tris if tris > 0
           end
-        else                          # ASCII STL, одним мешем
+        else                          # ASCII STL, single mesh
           f.rewind
           mesh = Geom::PolygonMesh.new
           pts  = {}
@@ -761,9 +939,14 @@ module EugenyH
       end
     end
 
+    # ---------- Menu ----------
+
+    Lang.current = Settings.get('language', Lang::DEFAULT)
+
     unless file_loaded?(__FILE__)
-      UI.menu('Plugins').add_item('Import STEP assembly (FreeCAD)') { run }
-      UI.menu('Plugins').add_item('Указать путь к FreeCADCmd…') { choose_freecad }
+      submenu = UI.menu('Plugins').add_submenu(t('menu.title'))
+      submenu.add_item(t('menu.import')) { run }
+      submenu.add_item(t('menu.settings')) { open_settings }
       file_loaded(__FILE__)
     end
   end

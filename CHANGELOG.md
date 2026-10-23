@@ -1,12 +1,21 @@
 # Changelog
 
-## 1.0.1
+## 1.1.0
 
-- The FreeCADCmd path is now stored in `%APPDATA%\EugenyH\StepImport\config.json`
-  (the SketchUp registry is kept as a fallback). Fixes the path being asked on every run.
-- A stored path that no longer exists is reported in the log and asked for again.
-- New menu item "Указать путь к FreeCADCmd…" to change the path manually.
-- The FreeCADCmd path in use is written to `%TEMP%\step_import.log`.
+- **English is now the primary interface language.** Russian is available as a second language;
+  all user-facing text lives in `locales/<code>.json`, so more languages can be added without
+  touching the code (see "Adding a language" in the README).
+- New **Settings** dialog (*Extensions → STEP Import (FreeCAD) → Settings…*): interface language
+  and the path to `FreeCADCmd.exe` (Browse / Auto-detect; empty = detect automatically).
+- Settings are stored in `%APPDATA%\EugenyH\StepImport\settings.json`. A path saved by earlier
+  versions in the Windows registry is migrated automatically.
+- FreeCADCmd auto-detection now also looks in `Program Files` on other drives and in
+  `%LOCALAPPDATA%\Programs`.
+- The menu is now a submenu: *Import STEP assembly…* and *Settings…*.
+- `step2stl_fc.py` reports progress as translation keys instead of Russian text.
+- The work log (`%TEMP%\step_import.log`) is always written in English.
+- CI: new `tools/check_locales.py` verifies that all locales have the same keys and placeholders
+  as `en.json` and that every key used in the code exists.
 
 ## 1.0.0 — first public release
 

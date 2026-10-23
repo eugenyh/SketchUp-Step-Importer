@@ -22,11 +22,16 @@ jobs:
         run: |
           ruby -wc src/eugenyh_step_import.rb
           ruby -wc src/eugenyh_step_import/main.rb
+          ruby -wc src/eugenyh_step_import/i18n.rb
+          ruby -wc src/eugenyh_step_import/settings.rb
           ruby -wc tools/step_bench.rb
           ruby -wc tools/step_check.rb
 
       - name: Python syntax
-        run: python -m py_compile src/eugenyh_step_import/step2stl_fc.py build_rbz.py
+        run: python -m py_compile src/eugenyh_step_import/step2stl_fc.py build_rbz.py tools/check_locales.py
+
+      - name: Locale files
+        run: python tools/check_locales.py
 
       - name: Build package
         run: python build_rbz.py

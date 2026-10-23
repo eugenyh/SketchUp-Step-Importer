@@ -24,6 +24,7 @@ then rebuilds the model in SketchUp.
 - Native progress window: stage, current part, log, elapsed time, **Cancel**
 - FreeCAD console window is hidden
 - Result saved as `<name>.skp` next to the STEP file
+- **Settings** dialog: interface language (English, Russian) and the FreeCADCmd path
 - Progress log in `%TEMP%\step_import.log`
 
 ## How it works
@@ -47,7 +48,7 @@ STEP ──► FreeCADCmd + step2stl_fc.py ──► def_XXXX.stl + manifest.jso
 
 - **Windows** (the launcher and FreeCAD discovery are Windows-specific)
 - **SketchUp 2021 or newer** (Ruby 2.7+). Developed and tested on SketchUp 2024.
-- **FreeCAD** installed (`FreeCADCmd.exe`). Tested with: *FreeCAD version — fill in*.
+- **FreeCAD** installed (`FreeCADCmd.exe`). Tested with FreeCAD 1.1.
   No separate Python is needed; the script runs inside FreeCAD's own interpreter.
 
 ## Installation
@@ -57,17 +58,50 @@ STEP ──► FreeCADCmd + step2stl_fc.py ──► def_XXXX.stl + manifest.jso
 2. SketchUp: **Window → Extension Manager → Install Extension** and pick the `.rbz`.
 3. Restart SketchUp.
 
-On first run the extension looks for `C:\Program Files\FreeCAD*\bin\FreeCADCmd.exe`;
-if it is not found you are asked to point to it, and the path is remembered.
+On first run the extension looks for `FreeCADCmd.exe` in the usual install locations
+(`Program Files` on any drive, `%LOCALAPPDATA%\Programs`); if it is not found you are
+asked to point to it, and the path is remembered. You can change it at any time in the
+Settings dialog.
 
 ## Usage
 
-**Extensions → Import STEP assembly (FreeCAD)**, choose a `.step` / `.stp` file and
-watch the progress window. When it finishes, the model is in SketchUp and a `.skp`
+**Extensions → STEP Import (FreeCAD) → Import STEP assembly…**, choose a `.step` / `.stp`
+file and watch the progress window. When it finishes, the model is in SketchUp and a `.skp`
 is saved next to the STEP file.
 
 > Don't edit the model while the import is running: the model is built inside a
 > single undoable operation, which is rolled back on cancel or error.
+
+## Settings
+
+**Extensions → STEP Import (FreeCAD) → Settings…**
+
+- **Language** — interface language. Dialogs and messages switch immediately;
+  the menu item names update after SketchUp is restarted.
+- **FreeCADCmd.exe path** — type it, use **Browse…**, or **Auto-detect**.
+  Leave it empty to detect FreeCAD automatically on the next import.
+
+Settings are stored in `%APPDATA%\EugenyH\StepImport\settings.json` (a small JSON file you
+can also edit by hand):
+
+```json
+{
+  "language": "en",
+  "freecadcmd": "D:/Program Files/FreeCAD 1.1/bin/FreeCADCmd.exe"
+}
+```
+
+## Adding a language
+
+All user-facing text is in `src/eugenyh_step_import/locales/<code>.json`.
+
+1. Copy `en.json` to `<code>.json` (for example `de.json`).
+2. Translate the values; keep the keys and the `%{placeholders}` unchanged, and set
+   `"_language_name"` to the name shown in the Settings dialog.
+3. Run `python tools/check_locales.py` — it verifies that the keys and placeholders match `en.json`.
+
+The new language shows up in the Settings dialog automatically. Missing keys fall back to English.
+The work log (`step_import.log`) is always in English.
 
 ## Configuration
 
@@ -97,7 +131,7 @@ extension folder under `Plugins`):
 - SketchUp cannot represent edges shorter than 0.001″ (≈ 0.025 mm): the tiniest
   sliver triangles of dense meshes disappear (≈ 0.16 % of the area on a test PCB).
 - Parts whose shapes differ by less than 0.01 mm may be treated as identical.
-- The user interface is currently in **Russian only**.
+- The interface is available in English and Russian.
 - Windows only; not tested on other platforms.
 
 ## Troubleshooting
@@ -107,6 +141,7 @@ extension folder under `Plugins`):
   files, `manifest.json`, `freecad.log` and `error.txt`.
 - If the FreeCAD window is visible, Windows Script Host is probably disabled; the
   extension then falls back to a normal launch.
+- If FreeCAD is not found or was moved, set the path in **Settings…**.
 
 ## Performance notes for SketchUp extension developers
 
