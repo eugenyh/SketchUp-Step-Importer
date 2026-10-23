@@ -18,6 +18,11 @@ module EugenyH
     PREF   = 'EugenyH_StepImport'
     SCRIPT = File.join(__dir__, 'step2stl_fc.py')
 
+    # Файл настроек: %APPDATA%\EugenyH\StepImport\config.json
+    # Лежит вне папки расширения, поэтому переживает обновление и переустановку.
+    CONFIG_DIR  = File.join(ENV['APPDATA'] || Dir.home, 'EugenyH', 'StepImport')
+    CONFIG_FILE = File.join(CONFIG_DIR, 'config.json')
+
     # Параметры конвертации (мм)
     TOL        = '0.1'   # допуск триангуляции обычных деталей
     TOL_MERGED = '0.5'   # допуск для склеенных контейнеров (плата)
@@ -50,17 +55,79 @@ module EugenyH
       nil
     end
 
+    # ---------- Настройки (config.json) ----------
+
+    def self.load_config
+      data = JSON.parse(File.read(CONFIG_FILE, encoding: 'UTF-8'))
+      data.is_a?(Hash) ? data : {}
+    rescue StandardError
+      {}
+    end
+
+    # Возвращает true, если файл записан.
+    def self.save_config(cfg)
+      FileUtils.mkdir_p(CONFIG_DIR)
+      File.write(CONFIG_FILE, JSON.pretty_generate(cfg), encoding: 'UTF-8')
+      true
+    rescue StandardError => e
+      log "Не удалось записать #{CONFIG_FILE}: #{e.class}: #{e.message}"
+      false
+    end
+
     # ---------- FreeCAD ----------
 
-    def self.freecad_exe
-      saved = Sketchup.read_default(PREF, 'freecadcmd')
-      return saved if saved && File.exist?(saved)
+    # Сохранённый путь: сначала config.json, затем реестр (настройки версии 1.0.0).
+    # Возвращает путь, только если файл по нему существует.
+    def self.saved_freecad_path
+      cfg = load_config
+      reg = Sketchup.read_default(PREF, 'freecadcmd')
+      [cfg['freecadcmd'], reg].each do |p|
+        next if p.nil? || p.to_s.empty?
+        p = p.to_s.dup.force_encoding('UTF-8').tr('\\', '/')
+        if File.exist?(p)
+          # Путь нашёлся только в реестре - переносим в config.json
+          store_freecad_path(p) if cfg['freecadcmd'].to_s.empty?
+          return p
+        end
+        log "Сохранённый путь к FreeCADCmd недоступен: #{p}"
+      end
+      nil
+    end
 
-      found = Dir.glob('C:/Program Files/FreeCAD*/bin/FreeCADCmd.exe').max
-      found ||= UI.openpanel('Укажите FreeCADCmd.exe', 'C:/Program Files',
+    def self.store_freecad_path(path)
+      cfg = load_config
+      cfg['freecadcmd'] = path
+      ok = save_config(cfg)
+      Sketchup.write_default(PREF, 'freecadcmd', path)   # запасной вариант
+      log "Путь к FreeCADCmd сохранён (#{ok ? CONFIG_FILE : 'только реестр'}): #{path}"
+    end
+
+    # force = true: не использовать сохранённый путь и автопоиск, всегда спросить.
+    def self.freecad_exe(force = false)
+      unless force
+        saved = saved_freecad_path
+        return saved if saved
+        found = Dir.glob('C:/Program Files/FreeCAD*/bin/FreeCADCmd.exe').max
+      end
+
+      unless found
+        start = File.dirname(saved_freecad_path || 'C:/Program Files/x')
+        start = 'C:/Program Files' unless File.directory?(start)
+        found = UI.openpanel('Укажите FreeCADCmd.exe', start,
                              'FreeCADCmd.exe|FreeCADCmd.exe||')
-      Sketchup.write_default(PREF, 'freecadcmd', found) if found
+      end
+
+      if found
+        found = found.to_s.tr('\\', '/')
+        store_freecad_path(found)
+      end
       found
+    end
+
+    # Пункт меню: сменить путь к FreeCADCmd вручную.
+    def self.choose_freecad
+      exe = freecad_exe(true)
+      UI.messagebox("Путь к FreeCADCmd сохранён:\n#{exe}") if exe
     end
 
     # ---------- Окно прогресса ----------
@@ -199,6 +266,7 @@ module EugenyH
         File.write(LOG_FILE, '')
         @tmp = Dir.mktmpdir('step2stl')               # ASCII-путь, без кириллицы
         StepImport.log "Старт: #{@step}"
+        StepImport.log "FreeCADCmd: #{@exe}"
         StepImport.log "Временная папка: #{@tmp}"
 
         @dlg = ProgressDialog.new('Импорт STEP', @name) { cancel }
@@ -695,6 +763,7 @@ module EugenyH
 
     unless file_loaded?(__FILE__)
       UI.menu('Plugins').add_item('Import STEP assembly (FreeCAD)') { run }
+      UI.menu('Plugins').add_item('Указать путь к FreeCADCmd…') { choose_freecad }
       file_loaded(__FILE__)
     end
   end

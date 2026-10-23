@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- The FreeCADCmd path is now stored in `%APPDATA%\EugenyH\StepImport\config.json`
+  (the SketchUp registry is kept as a fallback). Fixes the path being asked on every run.
+- A stored path that no longer exists is reported in the log and asked for again.
+- New menu item "Указать путь к FreeCADCmd…" to change the path manually.
+- The FreeCADCmd path in use is written to `%TEMP%\step_import.log`.
+
 ## 1.0.0 — first public release
 
 - Imports STEP assemblies through FreeCAD (`FreeCADCmd.exe`) and builds the model in SketchUp.
