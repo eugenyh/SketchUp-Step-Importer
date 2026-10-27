@@ -34,6 +34,11 @@ module EugenyH
     BIG_TRIS   = 300_000 # warn when a single STL has more triangles than this
     SOFTEN_MAX = 20_000  # soften edges only for meshes up to this size
     SOFTEN_ANGLE = 10    # edges between faces closer than this angle (degrees) are hidden and smoothed
+    MERGE_COPLANAR = true   # merge coplanar faces (STL triangles -> polygons)
+    MERGE_MAX      = 200_000 # skip face merging for meshes above this many triangles (measured up to 161k: 3.8 s)
+    # SketchUp silently drops tiny faces (below ~0.001 inch). Geometry is therefore built this many
+    # times larger and every instance gets the inverse scale. 1 = old behaviour (no scaling).
+    BUILD_SCALE    = 10
     CHUNK      = 20_000  # triangles per read of a binary STL
 
     FREECAD_TIMEOUT = 900  # seconds; FreeCAD is killed after this
@@ -681,7 +686,7 @@ module EugenyH
 
       def place_instance(i, d)
         parent = StepImport.ensure_path(@root, @cache, i['path'])
-        tr = StepImport.to_transformation(i['matrix'])
+        tr = StepImport.to_transformation(i['matrix'], 1.0 / BUILD_SCALE)
 
         if d['count'] > 1
           cd = (@comps[i['def']] ||= StepImport.make_definition(@tmp, d))
@@ -799,6 +804,15 @@ module EugenyH
       log format('  %s: %d triangles, reading %.1f s, faces %.1f s',
                  d['file'], total, (Time.now - t0) - t_fill, t_fill)
 
+      # Merge coplanar faces once the geometry is fully built by the single fill_from_mesh call.
+      if MERGE_COPLANAR && total <= MERGE_MAX
+        t_m = Time.now
+        n = merge_coplanar(entities)
+        log format('  merged coplanar edges: %d, %.2f s', n, Time.now - t_m)
+      elsif MERGE_COPLANAR
+        log "  face merging skipped (more than #{MERGE_MAX} triangles)"
+      end
+
       if total <= SOFTEN_MAX
         soften(entities)
       else
@@ -835,11 +849,12 @@ module EugenyH
 
     # FreeCAD: 16 numbers row by row, translation in r[3], r[7], r[11] (mm)
     # SketchUp: 16 numbers column by column, translation in inches
-    def self.to_transformation(r)
+    # s scales the local geometry only (the 3x3 part), the translation is left as is.
+    def self.to_transformation(r, s = 1.0)
       Geom::Transformation.new([
-        r[0], r[4], r[8],  r[12],
-        r[1], r[5], r[9],  r[13],
-        r[2], r[6], r[10], r[14],
+        r[0] * s, r[4] * s, r[8] * s,  r[12],
+        r[1] * s, r[5] * s, r[9] * s,  r[13],
+        r[2] * s, r[6] * s, r[10] * s, r[14],
         r[3].mm, r[7].mm, r[11].mm, r[15]
       ])
     end
@@ -922,11 +937,27 @@ module EugenyH
     def self.add_tri(mesh, pts, v, o)
       ids = [0, 3, 6].map do |d|
         x = v[o + d]; y = v[o + d + 1]; z = v[o + d + 2]
-        pts[[x, y, z]] ||= mesh.add_point(Geom::Point3d.new(x.mm, y.mm, z.mm))
+        pts[[x, y, z]] ||= mesh.add_point(Geom::Point3d.new(x.mm * BUILD_SCALE, y.mm * BUILD_SCALE, z.mm * BUILD_SCALE))
       end
       return false if ids[0] == ids[1] || ids[1] == ids[2] || ids[0] == ids[2]
       mesh.add_polygon(ids)
       true
+    end
+
+    # An edge between two coplanar faces with the same normal direction.
+    def self.coplanar_edge?(e)
+      return false unless e.faces.size == 2
+      f1, f2 = e.faces
+      return false unless f1.normal.dot(f2.normal) > 0 && f1.normal.parallel?(f2.normal)
+      f2.vertices.all? { |v| v.position.distance_to_plane(f1.plane) < 0.0001 }
+    end
+
+    # Batch Entities#erase_entities merges the faces instead of deleting them
+    # (probe: 2356 -> 1214 faces). Per-edge Edge#erase! does nothing here.
+    def self.merge_coplanar(entities)
+      edges = entities.grep(Sketchup::Edge).select { |e| coplanar_edge?(e) }
+      entities.erase_entities(edges) unless edges.empty?
+      edges.size
     end
 
     def self.soften(entities)

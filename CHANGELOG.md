@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.1
+
+- Face merging now also covers big meshes: `MERGE_MAX` raised from 60 000 to 200 000 triangles
+  (a 161k-triangle PCB mesh merges in about 4 s).
+
+## 1.3.0
+
+- Tiny faces are no longer lost. SketchUp silently refused to build faces from very small
+  triangles (on a test part 132 of 2488 became edges without faces, leaving open holes).
+  Geometry is now built `BUILD_SCALE` (10) times larger and each instance carries the inverse
+  scale, so the model keeps its real size. Set `BUILD_SCALE = 1` for the old behaviour.
+  Instances therefore show a scale of 1/10 in Entity Info; exploding them scales the geometry
+  back down and may drop tiny faces again.
+
+## 1.2.0
+
+- Coplanar triangles from STL are merged into polygons after import (`MERGE_COPLANAR`,
+  skipped for meshes above `MERGE_MAX` triangles). On a test part this roughly halves the
+  face count, so a separate cleanup pass is no longer needed for this.
+
 ## 1.1.0
 
 - **English is now the primary interface language.** Russian is available as a second language;

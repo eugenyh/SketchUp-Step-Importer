@@ -116,6 +116,9 @@ extension folder under `Plugins`):
 | `SAVE_SKP` | `true` | Save `<name>.skp` next to the STEP file |
 | `SOFTEN_ANGLE` | `10` | Edges between faces closer than this angle (°) are softened |
 | `SOFTEN_MAX` | `20_000` | Skip edge softening for meshes larger than this (triangles) |
+| `MERGE_COPLANAR` | `true` | Merge coplanar triangles into polygons after import |
+| `MERGE_MAX` | `200_000` | Skip face merging for meshes larger than this (triangles) |
+| `BUILD_SCALE` | `10` | Build geometry this many times larger and scale instances back (keeps tiny faces); `1` = off |
 | `BIG_TRIS` | `300_000` | Ask for confirmation above this many triangles in one STL |
 | `HIDE_FREECAD` | `true` | Hide the FreeCAD console window |
 | `FREECAD_TIMEOUT` | `900` | Seconds before a stuck FreeCAD is killed |
@@ -128,8 +131,11 @@ extension folder under `Plugins`):
 - Assemblies built from `App::Link` objects may come out incomplete (links are skipped).
 - If a part's geometry is baked into global coordinates instead of a placement,
   repeated copies are not recognised and come out as separate groups.
-- SketchUp cannot represent edges shorter than 0.001″ (≈ 0.025 mm): the tiniest
-  sliver triangles of dense meshes disappear (≈ 0.16 % of the area on a test PCB).
+- SketchUp drops faces and edges below its internal tolerance (about 0.001″ in model
+  coordinates). To keep tiny triangles, geometry is built `BUILD_SCALE` times larger and
+  instances are scaled back, so they carry a scale of 1/`BUILD_SCALE`; exploding them shrinks the
+  geometry again and may lose tiny faces. On the test PCB, 468 of 161 523 triangles (0.3 %) are
+  still dropped, versus 34 528 (21 %) without scaling.
 - Parts whose shapes differ by less than 0.01 mm may be treated as identical.
 - The interface is available in English and Russian.
 - Windows only; not tested on other platforms.
